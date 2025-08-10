@@ -24,14 +24,21 @@ torch.manual_seed(42)
 np.random.seed(42)
 random.seed(42)
 
+# 检查CUDA可用性并设置设备
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+print(f"使用设备: {device}")
+if torch.cuda.is_available():
+    print(f"GPU名称: {torch.cuda.get_device_name(0)}")
+    print(f"GPU内存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+
 # 设置默认数据类型
-torch.set_default_dtype(torch.double)
+torch.set_default_dtype(torch.float32)
 
 # 设置matplotlib字体为Arial
 plt.rcParams['font.family'] = 'Arial'
 
 print("开始训练CNN水体分类模型...")
-print("使用AlphaEarth特征和3x3窗口")
+print("使用AlphaEarth特征和5x5窗口")
 
 # 读取数据
 print("\n1. 读取数据...")
@@ -81,13 +88,10 @@ for col in feature_columns:
 train_features = np.stack(train_features_list, axis=1)
 print(f"训练特征形状: {train_features.shape}")
 
-# 由于数据是5x5但我们需要3x3，取中心3x3区域
-if train_features.shape[2] == 5 and train_features.shape[3] == 5:
-    print("将5x5窗口裁剪为3x3窗口（取中心区域）")
-    train_features = train_features[:, :, 1:4, 1:4]  # 取中心3x3
-    print(f"裁剪后训练特征形状: {train_features.shape}")
+# 数据是5x5窗口，保持原始尺寸
+print(f"使用5x5窗口，训练特征形状: {train_features.shape}")
 
-train_features = torch.tensor(train_features, dtype=torch.double)
+train_features = torch.tensor(train_features, dtype=torch.float32)
 train_labels = torch.tensor(train_data['landcover_binary'].values, dtype=torch.long)
 
 # 处理验证数据
@@ -100,12 +104,10 @@ for col in feature_columns:
 val_features = np.stack(val_features_list, axis=1)
 print(f"验证特征形状: {val_features.shape}")
 
-# 同样裁剪验证数据
-if val_features.shape[2] == 5 and val_features.shape[3] == 5:
-    val_features = val_features[:, :, 1:4, 1:4]  # 取中心3x3
-    print(f"裁剪后验证特征形状: {val_features.shape}")
+# 验证数据也是5x5窗口
+print(f"验证特征形状: {val_features.shape}")
 
-val_features = torch.tensor(val_features, dtype=torch.double)
+val_features = torch.tensor(val_features, dtype=torch.float32)
 val_labels = torch.tensor(val_data['landcover_binary'].values, dtype=torch.long)
 
 # 创建数据加载器
@@ -121,53 +123,48 @@ print(f"批次大小: {batch_size}")
 print(f"训练批次数: {len(train_loader)}")
 print(f"验证批次数: {len(val_loader)}")
 
-# 定义CNN模型 - 适配3x3输入和15个特征通道
+# 定义CNN模型 - 适配5x5输入和15个特征通道，参考原始geeCNN架构
 print("\n6. 定义CNN模型...")
 class WaterCNN(nn.Module):
     def __init__(self, num_features=15, num_classes=2):
         super(WaterCNN, self).__init__()
-        
-        # 第一层卷积：15个输入通道 -> 32个输出通道
-        self.conv1 = nn.Conv2d(num_features, 32, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-        
-        # 第二层卷积：32 -> 64
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
-        
-        # 第三层卷积：64 -> 128
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(128)
-        
-        # 全连接层
-        # 3x3输入经过3层卷积后仍为3x3（使用padding=1）
-        self.fc1 = nn.Linear(128 * 3 * 3, 256)
-        self.dropout1 = nn.Dropout(0.5)
-        self.fc2 = nn.Linear(256, 64)
-        self.dropout2 = nn.Dropout(0.3)
-        self.fc3 = nn.Linear(64, num_classes)
-        
-    def forward(self, x):
-        # 卷积层
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        
-        # 展平
-        x = x.view(x.size(0), -1)
-        
-        # 全连接层
-        x = F.relu(self.fc1(x))
-        x = self.dropout1(x)
-        x = F.relu(self.fc2(x))
-        x = self.dropout2(x)
-        x = self.fc3(x)
-        
-        return x
 
-# 创建模型
+        # 参考原始geeCNN架构，适配5x5窗口
+        self.conv1 = nn.Conv2d(in_channels=num_features, out_channels=16, kernel_size=(3, 3), padding=0)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=(3, 3), padding=0)
+        self.conv3 = nn.Conv2d(in_channels=32 + num_features, out_channels=64, kernel_size=(1, 1))  # 连接中心1x1
+        self.conv4 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(1, 1))
+        self.conv5 = nn.Conv2d(in_channels=128, out_channels=num_classes, kernel_size=(1, 1))
+
+    def forward(self, x):
+        # x shape: (batch, 15, 5, 5)
+        x1 = F.relu(self.conv1(x))  # (batch, 16, 3, 3) - 5x5 -> 3x3
+        x2 = F.relu(self.conv2(x1))  # (batch, 32, 1, 1) - 3x3 -> 1x1
+
+        # 取原始输入的中心1x1区域
+        center_1x1 = x[:, :, 2:3, 2:3]  # (batch, 15, 1, 1) - 从5x5中取中心
+
+        # 连接特征
+        x3_input = torch.cat((x2, center_1x1), dim=1)  # (batch, 32+15=47, 1, 1)
+        x3 = F.relu(self.conv3(x3_input))  # (batch, 64, 1, 1)
+        x4 = F.relu(self.conv4(x3))  # (batch, 128, 1, 1)
+        x5 = self.conv5(x4)  # (batch, 2, 1, 1)
+
+        # 展平为分类输出
+        return x5.view(x5.size(0), -1)  # (batch, 2)
+
+# 创建模型并移到GPU
 model = WaterCNN(num_features=len(feature_columns), num_classes=2)
 print(f"模型参数数量: {sum(p.numel() for p in model.parameters())}")
+
+# 确保模型完全移动到设备
+model = model.to(device)
+print(f"模型已移动到设备: {device}")
+
+# 检查模型参数设备
+for name, param in model.named_parameters():
+    if param.device != device:
+        print(f"警告: 参数 {name} 在设备 {param.device}，应该在 {device}")
 
 # 定义损失函数和优化器
 criterion = nn.CrossEntropyLoss()
@@ -196,12 +193,13 @@ for epoch in range(num_epochs):
     train_total = 0
     
     for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
         loss = criterion(output, target)
         loss.backward()
         optimizer.step()
-        
+
         train_loss += loss.item()
         _, predicted = torch.max(output.data, 1)
         train_total += target.size(0)
@@ -215,9 +213,10 @@ for epoch in range(num_epochs):
     
     with torch.no_grad():
         for data, target in val_loader:
+            data, target = data.to(device), target.to(device)
             output = model(data)
             loss = criterion(output, target)
-            
+
             val_loss += loss.item()
             _, predicted = torch.max(output.data, 1)
             val_total += target.size(0)
@@ -262,6 +261,7 @@ all_targets = []
 
 with torch.no_grad():
     for data, target in val_loader:
+        data, target = data.to(device), target.to(device)
         output = model(data)
         _, predicted = torch.max(output.data, 1)
         all_predictions.extend(predicted.cpu().numpy())
