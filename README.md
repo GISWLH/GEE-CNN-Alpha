@@ -1,3 +1,7 @@
+<!-- readme-visual-refresh:banner -->
+![GEE-CNN-Alpha — hand-drawn project banner](assets/readme/banner.svg)
+<!-- /readme-visual-refresh:banner -->
+
 # GEE-CNN-Alpha: Water Body Detection using CNN with AlphaEarth and Sentinel-2
 
 This project combines Google Earth Engine (GEE), Convolutional Neural Networks (CNN), and AlphaEarth embeddings for accurate water body detection using multi-source remote sensing data.
@@ -163,3 +167,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📧 Contact
 
 For questions or collaborations, please open an issue or contact [hhuwlh@163.com].
+
+<!-- readme-visual-refresh:artwork-source -->
+[Editable banner artwork · Excalidraw](assets/readme/banner.excalidraw)
+<!-- /readme-visual-refresh:artwork-source -->
